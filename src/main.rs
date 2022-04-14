@@ -39,11 +39,9 @@ fn main() {
         .send_json(json!({ "webhook": format!("https://{}", WEBHOOK) }))
         .unwrap();
 
-    let workers = (0..opt.threads)
-        .map(|_| miner::Worker::new())
-        .collect::<Vec<_>>();
-
     let server = Server::http(WEBHOOK).unwrap();
+
+    let mut workers = Vec::<miner::Worker>::new();
 
     let mut context: Option<Arc<rust_randomx::Context>> = None;
 
@@ -60,6 +58,10 @@ fn main() {
     });
 
     for mut request in server.incoming_requests() {
+        while workers.len() < opt.threads {
+            workers.push(miner::Worker::new());
+        }
+
         let mut content = String::new();
         request.as_reader().read_to_string(&mut content).unwrap();
         let req: Request = serde_json::from_str(&content).unwrap();
@@ -69,7 +71,7 @@ fn main() {
             context = Some(Arc::new(rust_randomx::Context::new(&req_key, !opt.slow)));
         }
 
-        for w in workers.iter() {
+        workers.retain(|w| {
             w.chan
                 .send(miner::Puzzle {
                     context: Arc::clone(context.as_ref().unwrap()),
@@ -79,8 +81,8 @@ fn main() {
                     target: rust_randomx::Difficulty::new(req.target),
                     callback: sol_send.clone(),
                 })
-                .unwrap();
-        }
+                .is_err()
+        });
 
         request.respond(Response::from_string("OK")).unwrap();
     }
