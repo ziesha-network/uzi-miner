@@ -42,6 +42,7 @@ fn main() {
     let server = Server::http(WEBHOOK).unwrap();
 
     let mut workers = Vec::<miner::Worker>::new();
+    let mut puzzle_id = 0;
 
     let mut context: Option<Arc<rust_randomx::Context>> = None;
 
@@ -59,7 +60,7 @@ fn main() {
 
     for mut request in server.incoming_requests() {
         while workers.len() < opt.threads {
-            workers.push(miner::Worker::new());
+            workers.push(miner::Worker::new(sol_send.clone()));
         }
 
         let mut content = String::new();
@@ -74,17 +75,19 @@ fn main() {
         workers.retain(|w| {
             w.chan
                 .send(miner::Puzzle {
+                    id: puzzle_id,
                     context: Arc::clone(context.as_ref().unwrap()),
                     blob: hex::decode(&req.blob).unwrap(),
                     offset: req.offset,
                     count: req.size,
                     target: rust_randomx::Difficulty::new(req.target),
-                    callback: sol_send.clone(),
                 })
                 .is_err()
         });
 
         request.respond(Response::from_string("OK")).unwrap();
+
+        puzzle_id += 1;
     }
 
     for w in workers {

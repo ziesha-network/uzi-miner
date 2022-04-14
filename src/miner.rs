@@ -6,6 +6,7 @@ use std::thread;
 
 #[derive(Clone, Debug)]
 pub struct Solution {
+    pub id: u32,
     pub nonce: Vec<u8>,
 }
 
@@ -14,12 +15,12 @@ unsafe impl Sync for Solution {}
 
 #[derive(Clone)]
 pub struct Puzzle {
+    pub id: u32,
     pub context: Arc<Context>,
     pub blob: Vec<u8>,
     pub offset: usize,
     pub count: usize,
     pub target: Difficulty,
-    pub callback: mpsc::Sender<Solution>,
 }
 
 unsafe impl Send for Puzzle {}
@@ -31,7 +32,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new() -> Self {
+    pub fn new(callback: mpsc::Sender<Solution>) -> Self {
         let (puzzle_send, puzzle_recv) = mpsc::channel::<Puzzle>();
         let handle = thread::spawn(move || {
             let mut rng = rand::thread_rng();
@@ -49,9 +50,9 @@ impl Worker {
                         .copy_from_slice(&next_nonce.to_le_bytes());
                     let out = hasher.hash_next(&puzzle.blob);
                     if out.meets_difficulty(puzzle.target) {
-                        if puzzle
-                            .callback
+                        if callback
                             .send(Solution {
+                                id: puzzle.id,
                                 nonce: nonce.to_le_bytes().to_vec(),
                             })
                             .is_err()
