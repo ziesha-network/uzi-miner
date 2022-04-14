@@ -58,6 +58,7 @@ impl Worker {
                         {
                             println!("Puzzle callback failed!");
                         }
+                        hasher.hash_last();
                         break;
                     }
                     nonce = next_nonce;
@@ -67,6 +68,7 @@ impl Worker {
                     // new puzzle.
                     if counter >= 4096 {
                         if let Ok(new_puzzle) = puzzle_recv.try_recv() {
+                            hasher.hash_last();
                             puzzle = new_puzzle;
                             hasher = Hasher::new(Arc::clone(&puzzle.context));
                             hasher.hash_first(&nonce.to_le_bytes());
