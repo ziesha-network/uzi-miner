@@ -61,7 +61,7 @@ fn main() {
         let req: Request = serde_json::from_str(&content).unwrap();
 
         let req_key = hex::decode(&req.key).unwrap();
-        if context.is_none() || context.as_ref().unwrap().key() == req_key {
+        if context.is_none() || context.as_ref().unwrap().key() != req_key {
             context = Some(Arc::new(rust_randomx::Context::new(&req_key, !opt.slow)));
         }
 
