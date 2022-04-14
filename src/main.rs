@@ -9,7 +9,7 @@ mod miner;
 
 const WEBHOOK: &'static str = "127.0.0.1:3000";
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "Uzi Miner", about = "Mine Zeeka with Uzi!")]
 struct Opt {
     #[structopt(short = "t", long = "threads", default_value = "1")]
@@ -49,9 +49,13 @@ fn main() {
 
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
 
-    let solution_getter = thread::spawn(|| {
+    let opt_clone = opt.clone();
+    let solution_getter = thread::spawn(move || {
         for sol in sol_recv {
-            println!("Solution found!: {:?}", sol);
+            println!("Found solution!");
+            ureq::post(&format!("{}/miner/mine", opt_clone.node))
+                .send_json(json!({ "nonce": sol.nonce }))
+                .unwrap();
         }
     });
 
