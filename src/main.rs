@@ -1,4 +1,7 @@
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
+use std::thread;
 use structopt::StructOpt;
 use tiny_http::{Response, Server};
 
@@ -16,6 +19,15 @@ struct Opt {
     node: String,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct Request {
+    key: String,
+    blob: String,
+    offset: usize,
+    size: usize,
+    target: u32,
+}
+
 fn main() {
     let opt = Opt::from_args();
 
@@ -25,18 +37,50 @@ fn main() {
         .unwrap();
 
     let workers = (0..opt.threads)
-        .map(|_| miner::new_worker())
+        .map(|_| miner::Worker::new())
         .collect::<Vec<_>>();
 
     let server = Server::http(WEBHOOK).unwrap();
 
-    for request in server.incoming_requests() {
-        let response = Response::from_string("hello world");
+    let mut context = Arc::new(rust_randomx::Context::new(b"", false));
 
-        request.respond(response).unwrap();
+    let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
+
+    let solution_getter = thread::spawn(|| {
+        for sol in sol_recv {
+            println!("Solution found!: {:?}", sol);
+        }
+    });
+
+    for mut request in server.incoming_requests() {
+        let mut content = String::new();
+        request.as_reader().read_to_string(&mut content).unwrap();
+        let req: Request = serde_json::from_str(&content).unwrap();
+
+        let req_key = hex::decode(&req.key).unwrap();
+        if req_key != context.key() {
+            context = Arc::new(rust_randomx::Context::new(&req_key, false));
+        }
+
+        for w in workers.iter() {
+            w.chan
+                .send(miner::Puzzle {
+                    context: Arc::clone(&context),
+                    blob: hex::decode(&req.blob).unwrap(),
+                    offset: req.offset,
+                    count: req.size,
+                    target: rust_randomx::Difficulty::new(req.target),
+                    callback: sol_send.clone(),
+                })
+                .unwrap();
+        }
+
+        request.respond(Response::from_string("OK")).unwrap();
     }
 
     for w in workers {
-        w.0.join().unwrap();
+        w.handle.join().unwrap();
     }
+    drop(sol_send);
+    solution_getter.join().unwrap();
 }
