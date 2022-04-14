@@ -40,11 +40,14 @@ impl Worker {
                 let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
                 let mut nonce: u32 = rng.gen();
                 let mut counter = 0;
-                hasher.hash_first(&nonce.to_le_bytes());
+                puzzle.blob[puzzle.offset..puzzle.count].copy_from_slice(&nonce.to_le_bytes());
+                hasher.hash_first(&puzzle.blob);
 
                 loop {
                     let next_nonce: u32 = rng.gen();
-                    let out = hasher.hash_next(&next_nonce.to_le_bytes());
+                    puzzle.blob[puzzle.offset..puzzle.count]
+                        .copy_from_slice(&next_nonce.to_le_bytes());
+                    let out = hasher.hash_next(&puzzle.blob);
                     if out.meets_difficulty(puzzle.target) {
                         if puzzle
                             .callback
