@@ -17,6 +17,9 @@ struct Opt {
 
     #[structopt(short = "n", long = "node")]
     node: String,
+
+    #[structopt(long = "slow")]
+    slow: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -42,7 +45,7 @@ fn main() {
 
     let server = Server::http(WEBHOOK).unwrap();
 
-    let mut context = Arc::new(rust_randomx::Context::new(b"", false));
+    let mut context: Option<Arc<rust_randomx::Context>> = None;
 
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
 
@@ -58,14 +61,14 @@ fn main() {
         let req: Request = serde_json::from_str(&content).unwrap();
 
         let req_key = hex::decode(&req.key).unwrap();
-        if req_key != context.key() {
-            context = Arc::new(rust_randomx::Context::new(&req_key, false));
+        if context.is_none() || context.as_ref().unwrap().key() == req_key {
+            context = Some(Arc::new(rust_randomx::Context::new(&req_key, !opt.slow)));
         }
 
         for w in workers.iter() {
             w.chan
                 .send(miner::Puzzle {
-                    context: Arc::clone(&context),
+                    context: Arc::clone(context.as_ref().unwrap()),
                     blob: hex::decode(&req.blob).unwrap(),
                     offset: req.offset,
                     count: req.size,
