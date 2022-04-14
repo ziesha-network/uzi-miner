@@ -1,4 +1,6 @@
-# Uzi - A RandomX CPU-miner for Zeeka cryptocurrency
+# Uzi
+
+A RandomX CPU-miner for Zeeka cryptocurrency
 
 ## Usage
 
