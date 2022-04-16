@@ -7,8 +7,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum WorkerError {
-    #[error("send error")]
-    SendError(#[from] mpsc::SendError<Solution>),
+    #[error("message send error")]
+    MessageSendError(#[from] mpsc::SendError<Message>),
+    #[error("solution send error")]
+    SolutionSendError(#[from] mpsc::SendError<Solution>),
     #[error("recv error")]
     RecvError(#[from] mpsc::RecvError),
     #[error("worker is terminated")]
@@ -47,10 +49,18 @@ unsafe impl Sync for Puzzle {}
 #[derive(Debug)]
 pub struct Worker {
     handle: Option<thread::JoinHandle<Result<(), WorkerError>>>,
-    pub chan: mpsc::Sender<Message>,
+    chan: mpsc::Sender<Message>,
 }
 
 impl Worker {
+    pub fn send(&self, msg: Message) -> Result<(), WorkerError> {
+        if self.handle.is_some() {
+            self.chan.send(msg)?;
+            Ok(())
+        } else {
+            Err(WorkerError::Terminated)
+        }
+    }
     pub fn terminate(&mut self) -> Result<(), WorkerError> {
         if let Some(handle) = self.handle.take() {
             println!("Terminating...");

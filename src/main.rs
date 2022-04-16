@@ -57,7 +57,7 @@ fn main() {
                 workers
                     .lock()
                     .unwrap()
-                    .retain(|w| w.chan.send(miner::Message::Break).is_ok());
+                    .retain(|w| w.send(miner::Message::Break).is_ok());
                 ureq::post(&format!("{}/miner/mine", opt.node))
                     .send_json(json!({ "nonce": sol.nonce }))
                     .unwrap();
@@ -66,31 +66,36 @@ fn main() {
     };
 
     for mut request in server.incoming_requests() {
-        let mut workers = workers.lock().unwrap();
-        while workers.len() < opt.threads {
-            workers.push(miner::Worker::new(sol_send.clone()));
-        }
+        // Parse request
+        let req: Request = {
+            let mut content = String::new();
+            request.as_reader().read_to_string(&mut content).unwrap();
+            serde_json::from_str(&content).unwrap()
+        };
 
-        let mut content = String::new();
-        request.as_reader().read_to_string(&mut content).unwrap();
-        let req: Request = serde_json::from_str(&content).unwrap();
-
+        // Reinitialize context if needed
         let req_key = hex::decode(&req.key).unwrap();
         if context.is_none() || context.as_ref().unwrap().key() != req_key {
             context = Some(Arc::new(rust_randomx::Context::new(&req_key, !opt.slow)));
         }
 
+        // Ensure correct number of workers
+        let mut workers = workers.lock().unwrap();
+        while workers.len() < opt.threads {
+            workers.push(miner::Worker::new(sol_send.clone()));
+        }
+
+        // Send the puzzle to workers
         workers.retain(|w| {
-            w.chan
-                .send(miner::Message::Puzzle(miner::Puzzle {
-                    id: puzzle_id,
-                    context: Arc::clone(context.as_ref().unwrap()),
-                    blob: hex::decode(&req.blob).unwrap(),
-                    offset: req.offset,
-                    count: req.size,
-                    target: rust_randomx::Difficulty::new(req.target),
-                }))
-                .is_ok()
+            w.send(miner::Message::Puzzle(miner::Puzzle {
+                id: puzzle_id,
+                context: Arc::clone(context.as_ref().unwrap()),
+                blob: hex::decode(&req.blob).unwrap(),
+                offset: req.offset,
+                count: req.size,
+                target: rust_randomx::Difficulty::new(req.target),
+            }))
+            .is_ok()
         });
 
         request.respond(Response::from_string("OK")).unwrap();
