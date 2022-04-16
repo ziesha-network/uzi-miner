@@ -23,21 +23,37 @@ pub struct Puzzle {
     pub target: Difficulty,
 }
 
+#[derive(Clone)]
+pub enum Message {
+    Puzzle(Puzzle),
+    Break,
+    Terminate,
+}
+
 unsafe impl Send for Puzzle {}
 unsafe impl Sync for Puzzle {}
 
+#[derive(Debug)]
 pub struct Worker {
     pub handle: thread::JoinHandle<()>,
-    pub chan: mpsc::Sender<Puzzle>,
+    pub chan: mpsc::Sender<Message>,
 }
 
 impl Worker {
     pub fn new(callback: mpsc::Sender<Solution>) -> Self {
-        let (puzzle_send, puzzle_recv) = mpsc::channel::<Puzzle>();
+        let (msg_send, msg_recv) = mpsc::channel::<Message>();
         let handle = thread::spawn(move || {
             let mut rng = rand::thread_rng();
             loop {
-                let mut puzzle = puzzle_recv.recv().unwrap();
+                let mut puzzle = match msg_recv.recv().unwrap() {
+                    Message::Puzzle(puzzle) => puzzle,
+                    Message::Break => {
+                        continue;
+                    }
+                    Message::Terminate => {
+                        return;
+                    }
+                };
                 let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
                 let mut nonce: u32 = rng.gen();
                 let mut counter = 0;
@@ -68,12 +84,22 @@ impl Worker {
                     // Every 4096 hashes, if there is a new puzzle, switch to the
                     // new puzzle.
                     if counter >= 4096 {
-                        if let Ok(new_puzzle) = puzzle_recv.try_recv() {
-                            hasher.hash_last();
-                            puzzle = new_puzzle;
-                            hasher = Hasher::new(Arc::clone(&puzzle.context));
-                            hasher.hash_first(&nonce.to_le_bytes());
-                            counter = 0;
+                        if let Ok(new_msg) = msg_recv.try_recv() {
+                            match new_msg {
+                                Message::Puzzle(new_puzzle) => {
+                                    hasher.hash_last();
+                                    puzzle = new_puzzle;
+                                    hasher = Hasher::new(Arc::clone(&puzzle.context));
+                                    hasher.hash_first(&nonce.to_le_bytes());
+                                    counter = 0;
+                                }
+                                Message::Break => {
+                                    break;
+                                }
+                                Message::Terminate => {
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
@@ -81,7 +107,7 @@ impl Worker {
         });
         Self {
             handle,
-            chan: puzzle_send,
+            chan: msg_send,
         }
     }
 }

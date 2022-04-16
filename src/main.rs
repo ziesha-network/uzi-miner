@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use structopt::StructOpt;
 use tiny_http::{Response, Server};
@@ -41,24 +41,32 @@ fn main() {
 
     let server = Server::http(WEBHOOK).unwrap();
 
-    let mut workers = Vec::<miner::Worker>::new();
+    let workers = Arc::new(Mutex::new(Vec::<miner::Worker>::new()));
     let mut puzzle_id = 0;
 
     let mut context: Option<Arc<rust_randomx::Context>> = None;
 
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
 
-    let opt_clone = opt.clone();
-    let solution_getter = thread::spawn(move || {
-        for sol in sol_recv {
-            println!("Found solution!");
-            ureq::post(&format!("{}/miner/mine", opt_clone.node))
-                .send_json(json!({ "nonce": sol.nonce }))
-                .unwrap();
-        }
-    });
+    let solution_getter = {
+        let workers = Arc::clone(&workers);
+        let opt = opt.clone();
+        thread::spawn(move || {
+            for sol in sol_recv {
+                println!("Found solution!");
+                workers
+                    .lock()
+                    .unwrap()
+                    .retain(|w| w.chan.send(miner::Message::Break).is_err());
+                ureq::post(&format!("{}/miner/mine", opt.node))
+                    .send_json(json!({ "nonce": sol.nonce }))
+                    .unwrap();
+            }
+        })
+    };
 
     for mut request in server.incoming_requests() {
+        let mut workers = workers.lock().unwrap();
         while workers.len() < opt.threads {
             workers.push(miner::Worker::new(sol_send.clone()));
         }
@@ -74,14 +82,14 @@ fn main() {
 
         workers.retain(|w| {
             w.chan
-                .send(miner::Puzzle {
+                .send(miner::Message::Puzzle(miner::Puzzle {
                     id: puzzle_id,
                     context: Arc::clone(context.as_ref().unwrap()),
                     blob: hex::decode(&req.blob).unwrap(),
                     offset: req.offset,
                     count: req.size,
                     target: rust_randomx::Difficulty::new(req.target),
-                })
+                }))
                 .is_err()
         });
 
@@ -90,7 +98,10 @@ fn main() {
         puzzle_id += 1;
     }
 
-    for w in workers {
+    for w in Arc::try_unwrap(workers).unwrap().into_inner().unwrap() {
+        if w.chan.send(miner::Message::Terminate).is_err() {
+            println!("Channel broken!");
+        }
         w.handle.join().unwrap();
     }
     drop(sol_send);
