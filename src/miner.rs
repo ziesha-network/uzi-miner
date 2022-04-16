@@ -11,6 +11,8 @@ pub enum WorkerError {
     SendError(#[from] mpsc::SendError<Solution>),
     #[error("recv error")]
     RecvError(#[from] mpsc::RecvError),
+    #[error("worker is terminated")]
+    Terminated,
 }
 
 #[derive(Clone, Debug)]
@@ -44,11 +46,22 @@ unsafe impl Sync for Puzzle {}
 
 #[derive(Debug)]
 pub struct Worker {
-    pub handle: thread::JoinHandle<Result<(), WorkerError>>,
+    handle: Option<thread::JoinHandle<Result<(), WorkerError>>>,
     pub chan: mpsc::Sender<Message>,
 }
 
 impl Worker {
+    pub fn terminate(&mut self) -> Result<(), WorkerError> {
+        if let Some(handle) = self.handle.take() {
+            println!("Terminating...");
+            if self.chan.send(Message::Terminate).is_err() {
+                println!("Channel broken!");
+            }
+            handle.join().unwrap()
+        } else {
+            Err(WorkerError::Terminated)
+        }
+    }
     pub fn new(callback: mpsc::Sender<Solution>) -> Self {
         let (msg_send, msg_recv) = mpsc::channel::<Message>();
         let handle = thread::spawn(move || -> Result<(), WorkerError> {
@@ -59,6 +72,7 @@ impl Worker {
                 let mut puzzle = match msg.clone() {
                     Message::Puzzle(puzzle) => puzzle,
                     Message::Break => {
+                        println!("Mining interrupted!");
                         msg = msg_recv.recv()?;
                         continue;
                     }
@@ -102,7 +116,7 @@ impl Worker {
         });
 
         Self {
-            handle,
+            handle: Some(handle),
             chan: msg_send,
         }
     }

@@ -57,7 +57,7 @@ fn main() {
                 workers
                     .lock()
                     .unwrap()
-                    .retain(|w| w.chan.send(miner::Message::Break).is_err());
+                    .retain(|w| w.chan.send(miner::Message::Break).is_ok());
                 ureq::post(&format!("{}/miner/mine", opt.node))
                     .send_json(json!({ "nonce": sol.nonce }))
                     .unwrap();
@@ -90,7 +90,7 @@ fn main() {
                     count: req.size,
                     target: rust_randomx::Difficulty::new(req.target),
                 }))
-                .is_err()
+                .is_ok()
         });
 
         request.respond(Response::from_string("OK")).unwrap();
@@ -98,11 +98,8 @@ fn main() {
         puzzle_id += 1;
     }
 
-    for w in Arc::try_unwrap(workers).unwrap().into_inner().unwrap() {
-        if w.chan.send(miner::Message::Terminate).is_err() {
-            println!("Channel broken!");
-        }
-        w.handle.join().unwrap();
+    for mut w in Arc::try_unwrap(workers).unwrap().into_inner().unwrap() {
+        w.terminate().unwrap();
     }
     drop(sol_send);
     solution_getter.join().unwrap();
