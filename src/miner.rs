@@ -90,24 +90,26 @@ impl Worker {
                         return Ok(());
                     }
                 };
-                let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
-                let mut nonce: u32 = rng.gen();
+
                 let mut counter = 0;
-                puzzle.blob[puzzle.offset..puzzle.count].copy_from_slice(&nonce.to_le_bytes());
+
+                let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
+
+                rng.fill_bytes(&mut puzzle.blob[puzzle.offset..puzzle.count]);
                 hasher.hash_first(&puzzle.blob);
 
                 loop {
-                    let next_nonce: u32 = rng.gen();
-                    puzzle.blob[puzzle.offset..puzzle.count]
-                        .copy_from_slice(&next_nonce.to_le_bytes());
+                    let prev_nonce = puzzle.blob[puzzle.offset..puzzle.count].to_vec();
+
+                    rng.fill_bytes(&mut puzzle.blob[puzzle.offset..puzzle.count]);
                     let out = hasher.hash_next(&puzzle.blob);
+
                     if out.meets_difficulty(puzzle.target) {
                         callback.send(Solution {
                             id: puzzle.id,
-                            nonce: nonce.to_le_bytes().to_vec(),
+                            nonce: prev_nonce,
                         })?;
                     }
-                    nonce = next_nonce;
                     counter += 1;
 
                     // Every 4096 hashes, if there is a new message, cancel the current
