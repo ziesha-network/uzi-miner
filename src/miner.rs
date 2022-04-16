@@ -3,6 +3,15 @@ use rust_randomx::{Context, Difficulty, Hasher};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum WorkerError {
+    #[error("send error")]
+    SendError(#[from] mpsc::SendError<Solution>),
+    #[error("recv error")]
+    RecvError(#[from] mpsc::RecvError),
+}
 
 #[derive(Clone, Debug)]
 pub struct Solution {
@@ -35,23 +44,26 @@ unsafe impl Sync for Puzzle {}
 
 #[derive(Debug)]
 pub struct Worker {
-    pub handle: thread::JoinHandle<()>,
+    pub handle: thread::JoinHandle<Result<(), WorkerError>>,
     pub chan: mpsc::Sender<Message>,
 }
 
 impl Worker {
     pub fn new(callback: mpsc::Sender<Solution>) -> Self {
         let (msg_send, msg_recv) = mpsc::channel::<Message>();
-        let handle = thread::spawn(move || {
+        let handle = thread::spawn(move || -> Result<(), WorkerError> {
             let mut rng = rand::thread_rng();
+            let mut msg = msg_recv.recv()?;
+
             loop {
-                let mut puzzle = match msg_recv.recv().unwrap() {
+                let mut puzzle = match msg.clone() {
                     Message::Puzzle(puzzle) => puzzle,
                     Message::Break => {
+                        msg = msg_recv.recv()?;
                         continue;
                     }
                     Message::Terminate => {
-                        return;
+                        return Ok(());
                     }
                 };
                 let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
@@ -66,45 +78,29 @@ impl Worker {
                         .copy_from_slice(&next_nonce.to_le_bytes());
                     let out = hasher.hash_next(&puzzle.blob);
                     if out.meets_difficulty(puzzle.target) {
-                        if callback
-                            .send(Solution {
-                                id: puzzle.id,
-                                nonce: nonce.to_le_bytes().to_vec(),
-                            })
-                            .is_err()
-                        {
-                            println!("Puzzle callback failed!");
-                        }
-                        hasher.hash_last();
-                        break;
+                        callback.send(Solution {
+                            id: puzzle.id,
+                            nonce: nonce.to_le_bytes().to_vec(),
+                        })?;
                     }
                     nonce = next_nonce;
                     counter += 1;
 
-                    // Every 4096 hashes, if there is a new puzzle, switch to the
-                    // new puzzle.
+                    // Every 4096 hashes, if there is a new message, cancel the current
+                    // puzzle and process the message.
                     if counter >= 4096 {
                         if let Ok(new_msg) = msg_recv.try_recv() {
-                            match new_msg {
-                                Message::Puzzle(new_puzzle) => {
-                                    hasher.hash_last();
-                                    puzzle = new_puzzle;
-                                    hasher = Hasher::new(Arc::clone(&puzzle.context));
-                                    hasher.hash_first(&nonce.to_le_bytes());
-                                    counter = 0;
-                                }
-                                Message::Break => {
-                                    break;
-                                }
-                                Message::Terminate => {
-                                    return;
-                                }
-                            }
+                            msg = new_msg;
+                            break;
                         }
+                        counter = 0;
                     }
                 }
+
+                hasher.hash_last();
             }
         });
+
         Self {
             handle,
             chan: msg_send,
