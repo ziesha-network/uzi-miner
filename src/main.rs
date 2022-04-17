@@ -58,8 +58,8 @@ fn main() {
                     .lock()
                     .unwrap()
                     .retain(|w| w.send(miner::Message::Break).is_ok());
-                ureq::post(&format!("{}/miner/mine", opt.node))
-                    .send_json(json!({ "nonce": sol.nonce }))
+                ureq::post(&format!("{}/miner/solution", opt.node))
+                    .send_json(json!({ "nonce": hex::encode(sol.nonce) }))
                     .unwrap();
             }
         })
@@ -98,7 +98,7 @@ fn main() {
             .is_ok()
         });
 
-        request.respond(Response::from_string("OK")).unwrap();
+        request.respond(Response::from_string("\"OK\"")).unwrap();
 
         puzzle_id += 1;
     }

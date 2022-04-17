@@ -95,13 +95,15 @@ impl Worker {
 
                 let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
 
-                rng.fill_bytes(&mut puzzle.blob[puzzle.offset..puzzle.count]);
+                let (b, e) = (puzzle.offset, puzzle.offset + puzzle.count);
+
+                rng.fill_bytes(&mut puzzle.blob[b..e]);
                 hasher.hash_first(&puzzle.blob);
 
                 loop {
-                    let prev_nonce = puzzle.blob[puzzle.offset..puzzle.count].to_vec();
+                    let prev_nonce = puzzle.blob[b..e].to_vec();
 
-                    rng.fill_bytes(&mut puzzle.blob[puzzle.offset..puzzle.count]);
+                    rng.fill_bytes(&mut puzzle.blob[b..e]);
                     let out = hasher.hash_next(&puzzle.blob);
 
                     if out.meets_difficulty(puzzle.target) {
