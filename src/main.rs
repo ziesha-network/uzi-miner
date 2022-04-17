@@ -36,7 +36,7 @@ fn main() {
 
     // Register the miner webhook on the node software
     ureq::post(&format!("{}/miner", opt.node))
-        .send_json(json!({ "webhook": format!("https://{}", WEBHOOK) }))
+        .send_json(json!({ "webhook": format!("http://{}", WEBHOOK) }))
         .unwrap();
 
     let server = Server::http(WEBHOOK).unwrap();
