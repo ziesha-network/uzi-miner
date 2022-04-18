@@ -63,10 +63,7 @@ impl Worker {
     }
     pub fn terminate(&mut self) -> Result<(), WorkerError> {
         if let Some(handle) = self.handle.take() {
-            println!("Terminating...");
-            if self.chan.send(Message::Terminate).is_err() {
-                println!("Channel broken!");
-            }
+            self.chan.send(Message::Terminate)?;
             handle.join().unwrap()
         } else {
             Err(WorkerError::Terminated)
@@ -82,7 +79,6 @@ impl Worker {
                 let mut puzzle = match msg.clone() {
                     Message::Puzzle(puzzle) => puzzle,
                     Message::Break => {
-                        println!("Mining interrupted!");
                         msg = msg_recv.recv()?;
                         continue;
                     }
@@ -114,9 +110,9 @@ impl Worker {
                     }
                     counter += 1;
 
-                    // Every 4096 hashes, if there is a new message, cancel the current
+                    // Every 512 hashes, if there is a new message, cancel the current
                     // puzzle and process the message.
-                    if counter >= 4096 {
+                    if counter >= 512 {
                         if let Ok(new_msg) = msg_recv.try_recv() {
                             msg = new_msg;
                             break;

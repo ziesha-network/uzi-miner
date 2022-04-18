@@ -73,6 +73,8 @@ fn main() {
             serde_json::from_str(&content).unwrap()
         };
 
+        println!("Got puzzle... {}", req.target);
+
         // Reinitialize context if needed
         let req_key = hex::decode(&req.key).unwrap();
         if context.is_none() || context.as_ref().unwrap().key() != req_key {
