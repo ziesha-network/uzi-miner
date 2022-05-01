@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -9,6 +12,10 @@ mod miner;
 
 const WEBHOOK: &'static str = "127.0.0.1:3000";
 
+lazy_static! {
+    static ref CURRENT_PUZZLE: Arc<Mutex<Option<Request>>> = Arc::new(Mutex::new(None));
+}
+
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "Uzi Miner", about = "Mine Zeeka with Uzi!")]
 struct Opt {
@@ -18,11 +25,14 @@ struct Opt {
     #[structopt(short = "n", long = "node")]
     node: String,
 
+    #[structopt(short = "w", long = "webhook")]
+    webhook: Option<String>,
+
     #[structopt(long = "slow")]
     slow: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 struct Request {
     key: String,
     blob: String,
@@ -35,8 +45,13 @@ fn main() {
     let opt = Opt::from_args();
 
     // Register the miner webhook on the node software
+    let req = if let Some(ref webhook) = opt.webhook {
+        json!({ "webhook": format!("http://{}", webhook) })
+    } else {
+        json!({})
+    };
     ureq::post(&format!("{}/miner", opt.node))
-        .send_json(json!({ "webhook": format!("http://{}", WEBHOOK) }))
+        .send_json(req)
         .unwrap();
 
     let server = Server::http(WEBHOOK).unwrap();
@@ -65,6 +80,22 @@ fn main() {
         })
     };
 
+    let puzzle_getter = thread::spawn(move || loop {
+        let pzl = ureq::get(&format!("{}/miner/puzzle", opt.node))
+            .call()
+            .unwrap()
+            .into_string()
+            .unwrap();
+
+        let pzl_json: Request = serde_json::from_str(&pzl).unwrap();
+        if *CURRENT_PUZZLE.lock().unwrap() != Some(pzl_json.clone()) {
+            ureq::post(&format!("http://{}", WEBHOOK))
+                .send_json(pzl_json)
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
+
     for mut request in server.incoming_requests() {
         // Parse request
         let req: Request = {
@@ -72,6 +103,8 @@ fn main() {
             request.as_reader().read_to_string(&mut content).unwrap();
             serde_json::from_str(&content).unwrap()
         };
+
+        *CURRENT_PUZZLE.lock().unwrap() = Some(req.clone());
 
         println!("Got puzzle... {}", req.target);
 
@@ -110,4 +143,5 @@ fn main() {
     }
     drop(sol_send);
     solution_getter.join().unwrap();
+    puzzle_getter.join().unwrap();
 }
