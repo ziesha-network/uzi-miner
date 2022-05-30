@@ -25,9 +25,6 @@ struct Opt {
     #[structopt(short = "n", long = "node")]
     node: String,
 
-    #[structopt(short = "w", long = "webhook")]
-    webhook: Option<String>,
-
     #[structopt(long = "slow")]
     slow: bool,
 }
@@ -43,16 +40,6 @@ struct Request {
 
 fn main() {
     let opt = Opt::from_args();
-
-    // Register the miner webhook on the node software
-    let req = if let Some(ref webhook) = opt.webhook {
-        json!({ "webhook": format!("http://{}", webhook) })
-    } else {
-        json!({})
-    };
-    ureq::post(&format!("{}/miner", opt.node))
-        .send_json(req)
-        .unwrap();
 
     let server = Server::http(WEBHOOK).unwrap();
 
