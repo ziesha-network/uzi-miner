@@ -38,6 +38,11 @@ struct Request {
     target: u32,
 }
 
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+struct RequestWrapper {
+    puzzle: Option<Request>,
+}
+
 fn main() {
     let opt = Opt::from_args();
 
@@ -74,8 +79,8 @@ fn main() {
             .into_string()
             .unwrap();
 
-        let pzl_json: Request = serde_json::from_str(&pzl).unwrap();
-        if *CURRENT_PUZZLE.lock().unwrap() != Some(pzl_json.clone()) {
+        let pzl_json: RequestWrapper = serde_json::from_str(&pzl).unwrap();
+        if *CURRENT_PUZZLE.lock().unwrap() != Some(pzl_json.puzzle.clone().unwrap()) {
             ureq::post(&format!("http://{}", WEBHOOK))
                 .send_json(pzl_json)
                 .unwrap();
@@ -85,11 +90,12 @@ fn main() {
 
     for mut request in server.incoming_requests() {
         // Parse request
-        let req: Request = {
+        let req: RequestWrapper = {
             let mut content = String::new();
             request.as_reader().read_to_string(&mut content).unwrap();
             serde_json::from_str(&content).unwrap()
         };
+        let req = req.puzzle.unwrap();
 
         *CURRENT_PUZZLE.lock().unwrap() = Some(req.clone());
 
