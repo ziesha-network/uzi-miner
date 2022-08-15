@@ -2,6 +2,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use structopt::StructOpt;
@@ -18,7 +19,7 @@ struct Opt {
     threads: usize,
 
     #[structopt(short = "n", long = "node")]
-    node: String,
+    node: SocketAddr,
 
     #[structopt(long = "slow")]
     slow: bool,
@@ -145,7 +146,7 @@ fn main() {
                     ctx.lock()?
                         .workers
                         .retain(|w| w.send(miner::Message::Break).is_ok());
-                    ureq::post(&format!("{}/miner/solution", opt.node))
+                    ureq::post(&format!("http://{}/miner/solution", opt.node))
                         .send_json(json!({ "nonce": hex::encode(sol.nonce) }))?;
                     Ok(())
                 }() {
@@ -160,7 +161,7 @@ fn main() {
         let opt = opt.clone();
         thread::spawn(move || loop {
             if let Err(e) = || -> Result<(), Box<dyn Error>> {
-                let pzl = ureq::get(&format!("{}/miner/puzzle", opt.node))
+                let pzl = ureq::get(&format!("http://{}/miner/puzzle", opt.node))
                     .call()?
                     .into_string()?;
 
