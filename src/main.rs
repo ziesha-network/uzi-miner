@@ -3,6 +3,7 @@ extern crate lazy_static;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use structopt::StructOpt;
@@ -11,10 +12,6 @@ use tiny_http::{Response, Server};
 mod miner;
 
 const WEBHOOK: &'static str = "127.0.0.1:3000";
-
-lazy_static! {
-    static ref CURRENT_PUZZLE: Arc<Mutex<Option<RequestWrapper>>> = Arc::new(Mutex::new(None));
-}
 
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "Uzi Miner", about = "Mine Zeeka with Uzi!")]
@@ -43,27 +40,89 @@ struct RequestWrapper {
     puzzle: Option<Request>,
 }
 
+fn process_request(
+    context: Arc<Mutex<MinerContext>>,
+    mut request: tiny_http::Request,
+    opt: &Opt,
+    sol_send: std::sync::mpsc::Sender<miner::Solution>,
+) -> Result<(), Box<dyn Error>> {
+    // Parse request
+    let req: RequestWrapper = {
+        let mut content = String::new();
+        request.as_reader().read_to_string(&mut content).unwrap();
+        serde_json::from_str(&content).unwrap()
+    };
+
+    let mut ctx = context.lock().unwrap();
+    ctx.current_puzzle = Some(req.clone());
+
+    if let Some(req) = req.puzzle {
+        println!("Got puzzle... {}", req.target);
+
+        // Reinitialize context if needed
+        let req_key = hex::decode(&req.key).unwrap();
+        if ctx.hasher_context.is_none() || ctx.hasher_context.as_ref().unwrap().key() != req_key {
+            ctx.hasher_context = Some(Arc::new(rust_randomx::Context::new(&req_key, !opt.slow)));
+        }
+
+        // Ensure correct number of workers
+        while ctx.workers.len() < opt.threads {
+            ctx.workers.push(miner::Worker::new(sol_send.clone()));
+        }
+
+        // Send the puzzle to workers
+        let hash_ctx = Arc::clone(ctx.hasher_context.as_ref().unwrap());
+        let puzzle_id = ctx.puzzle_id;
+        ctx.workers.retain(|w| {
+            w.send(miner::Message::Puzzle(miner::Puzzle {
+                id: puzzle_id,
+                context: Arc::clone(&hash_ctx),
+                blob: hex::decode(&req.blob).unwrap(),
+                offset: req.offset,
+                count: req.size,
+                target: rust_randomx::Difficulty::new(req.target),
+            }))
+            .is_ok()
+        });
+
+        request.respond(Response::from_string("\"OK\"")).unwrap();
+
+        ctx.puzzle_id += 1;
+    } else {
+        request.respond(Response::from_string("\"NOK\"")).unwrap();
+    }
+    Ok(())
+}
+
+struct MinerContext {
+    hasher_context: Option<Arc<rust_randomx::Context>>,
+    current_puzzle: Option<RequestWrapper>,
+    workers: Vec<miner::Worker>,
+    puzzle_id: u32,
+}
+
 fn main() {
     let opt = Opt::from_args();
 
     let server = Server::http(WEBHOOK).unwrap();
 
-    let workers = Arc::new(Mutex::new(Vec::<miner::Worker>::new()));
-    let mut puzzle_id = 0;
-
-    let mut context: Option<Arc<rust_randomx::Context>> = None;
-
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
+    let mut context = Arc::new(Mutex::new(MinerContext {
+        workers: Vec::new(),
+        current_puzzle: None,
+        hasher_context: None,
+        puzzle_id: 0,
+    }));
 
     let solution_getter = {
-        let workers = Arc::clone(&workers);
+        let ctx = Arc::clone(&context);
         let opt = opt.clone();
         thread::spawn(move || {
             for sol in sol_recv {
                 println!("Found solution!");
-                workers
-                    .lock()
+                ctx.lock()
                     .unwrap()
+                    .workers
                     .retain(|w| w.send(miner::Message::Break).is_ok());
                 ureq::post(&format!("{}/miner/solution", opt.node))
                     .send_json(json!({ "nonce": hex::encode(sol.nonce) }))
@@ -72,70 +131,34 @@ fn main() {
         })
     };
 
-    let puzzle_getter = thread::spawn(move || loop {
-        let pzl = ureq::get(&format!("{}/miner/puzzle", opt.node))
-            .call()
-            .unwrap()
-            .into_string()
-            .unwrap();
-
-        let pzl_json: RequestWrapper = serde_json::from_str(&pzl).unwrap();
-        if *CURRENT_PUZZLE.lock().unwrap() != Some(pzl_json.clone()) {
-            ureq::post(&format!("http://{}", WEBHOOK))
-                .send_json(pzl_json)
+    let puzzle_getter = {
+        let ctx = Arc::clone(&context);
+        let opt = opt.clone();
+        thread::spawn(move || loop {
+            let pzl = ureq::get(&format!("{}/miner/puzzle", opt.node))
+                .call()
+                .unwrap()
+                .into_string()
                 .unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(5));
-        }
-    });
+
+            let pzl_json: RequestWrapper = serde_json::from_str(&pzl).unwrap();
+            if ctx.lock().unwrap().current_puzzle != Some(pzl_json.clone()) {
+                ureq::post(&format!("http://{}", WEBHOOK))
+                    .send_json(pzl_json)
+                    .unwrap();
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        })
+    };
 
     for mut request in server.incoming_requests() {
-        // Parse request
-        let req: RequestWrapper = {
-            let mut content = String::new();
-            request.as_reader().read_to_string(&mut content).unwrap();
-            serde_json::from_str(&content).unwrap()
-        };
-
-        *CURRENT_PUZZLE.lock().unwrap() = Some(req.clone());
-
-        if let Some(req) = req.puzzle {
-            println!("Got puzzle... {}", req.target);
-
-            // Reinitialize context if needed
-            let req_key = hex::decode(&req.key).unwrap();
-            if context.is_none() || context.as_ref().unwrap().key() != req_key {
-                context = Some(Arc::new(rust_randomx::Context::new(&req_key, !opt.slow)));
-            }
-
-            // Ensure correct number of workers
-            let mut workers = workers.lock().unwrap();
-            while workers.len() < opt.threads {
-                workers.push(miner::Worker::new(sol_send.clone()));
-            }
-
-            // Send the puzzle to workers
-            workers.retain(|w| {
-                w.send(miner::Message::Puzzle(miner::Puzzle {
-                    id: puzzle_id,
-                    context: Arc::clone(context.as_ref().unwrap()),
-                    blob: hex::decode(&req.blob).unwrap(),
-                    offset: req.offset,
-                    count: req.size,
-                    target: rust_randomx::Difficulty::new(req.target),
-                }))
-                .is_ok()
-            });
-
-            request.respond(Response::from_string("\"OK\"")).unwrap();
-
-            puzzle_id += 1;
-        } else {
-            request.respond(Response::from_string("\"NOK\"")).unwrap();
-        }
+        process_request(context.clone(), request, &opt, sol_send.clone()).unwrap();
     }
 
-    for mut w in Arc::try_unwrap(workers).unwrap().into_inner().unwrap() {
-        w.terminate().unwrap();
+    if let Ok(ctx) = Arc::try_unwrap(context) {
+        for mut w in ctx.into_inner().unwrap().workers {
+            w.terminate().unwrap();
+        }
     }
     drop(sol_send);
     solution_getter.join().unwrap();
