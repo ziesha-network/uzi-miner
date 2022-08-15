@@ -48,6 +48,7 @@ unsafe impl Sync for Puzzle {}
 
 #[derive(Debug)]
 pub struct Worker {
+    worker_id: u32,
     handle: Option<thread::JoinHandle<Result<(), WorkerError>>>,
     chan: mpsc::Sender<Message>,
 }
@@ -63,13 +64,14 @@ impl Worker {
     }
     pub fn terminate(&mut self) -> Result<(), WorkerError> {
         if let Some(handle) = self.handle.take() {
+            log::info!("Terminating worker {}...", self.worker_id);
             self.chan.send(Message::Terminate)?;
             handle.join().unwrap()
         } else {
             Err(WorkerError::Terminated)
         }
     }
-    pub fn new(callback: mpsc::Sender<Solution>) -> Self {
+    pub fn new(worker_id: u32, callback: mpsc::Sender<Solution>) -> Self {
         let (msg_send, msg_recv) = mpsc::channel::<Message>();
         let handle = thread::spawn(move || -> Result<(), WorkerError> {
             let mut rng = rand::thread_rng();
@@ -83,6 +85,7 @@ impl Worker {
                         continue;
                     }
                     Message::Terminate => {
+                        log::info!("Worker {} terminated!", worker_id);
                         return Ok(());
                     }
                 };
@@ -124,8 +127,10 @@ impl Worker {
                 hasher.hash_last();
             }
         });
+        log::info!("Worker {} created!", worker_id);
 
         Self {
+            worker_id,
             handle: Some(handle),
             chan: msg_send,
         }
