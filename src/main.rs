@@ -168,12 +168,12 @@ fn main() {
                 let pzl_json: RequestWrapper = serde_json::from_str(&pzl)?;
                 if ctx.lock()?.current_puzzle != Some(pzl_json.clone()) {
                     ureq::post(&format!("http://{}", WEBHOOK)).send_json(pzl_json)?;
-                    std::thread::sleep(std::time::Duration::from_secs(5));
                 }
                 Ok(())
             }() {
                 log::error!("Error: {}", e);
             }
+            std::thread::sleep(std::time::Duration::from_secs(5));
         })
     };
 
