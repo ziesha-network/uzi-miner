@@ -102,7 +102,16 @@ fn process_request(
 
         ctx.puzzle_id += 1;
     } else {
-        request.respond(Response::from_string("\"NOK\""))?;
+        println!(
+            "{} Suspending the workers...",
+            "No puzzles available!".bright_yellow()
+        );
+
+        // Suspend all workers
+        ctx.workers
+            .retain(|w| w.send(miner::Message::Break).is_ok());
+
+        request.respond(Response::from_string("\"OK\""))?;
     }
     Ok(())
 }
