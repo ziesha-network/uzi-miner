@@ -23,6 +23,9 @@ struct Opt {
 
     #[structopt(long = "slow")]
     slow: bool,
+
+    #[structopt(long, default_value = "")]
+    miner_token: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -171,6 +174,7 @@ fn main() {
         thread::spawn(move || loop {
             if let Err(e) = || -> Result<(), Box<dyn Error>> {
                 let pzl = ureq::get(&format!("http://{}/miner/puzzle", opt.node))
+                    .set("X-ZEEKA-MINER-TOKEN", &opt.miner_token)
                     .call()?
                     .into_string()?;
 
