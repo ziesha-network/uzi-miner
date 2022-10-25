@@ -159,6 +159,7 @@ fn main() {
                         .workers
                         .retain(|w| w.send(miner::Message::Break).is_ok());
                     ureq::post(&format!("http://{}/miner/solution", opt.node))
+                        .set("X-ZEEKA-MINER-TOKEN", &opt.miner_token)
                         .send_json(json!({ "nonce": hex::encode(sol.nonce) }))?;
                     Ok(())
                 }() {
