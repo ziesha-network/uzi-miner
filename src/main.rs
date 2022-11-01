@@ -6,11 +6,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use structopt::StructOpt;
-use tiny_http::{Response, Server};
 
 mod miner;
-
-const WEBHOOK: &'static str = "127.0.0.1:3000";
 
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "Uzi Miner", about = "Mine Zeeka with Uzi!")]
@@ -44,17 +41,10 @@ struct RequestWrapper {
 
 fn process_request(
     context: Arc<Mutex<MinerContext>>,
-    mut request: tiny_http::Request,
+    req: RequestWrapper,
     opt: &Opt,
     sol_send: std::sync::mpsc::Sender<miner::Solution>,
 ) -> Result<(), Box<dyn Error>> {
-    // Parse request
-    let req: RequestWrapper = {
-        let mut content = String::new();
-        request.as_reader().read_to_string(&mut content)?;
-        serde_json::from_str(&content)?
-    };
-
     let mut ctx = context.lock().unwrap();
     ctx.current_puzzle = Some(req.clone());
 
@@ -101,8 +91,6 @@ fn process_request(
             .is_ok()
         });
 
-        request.respond(Response::from_string("\"OK\""))?;
-
         ctx.puzzle_id += 1;
     } else {
         println!(
@@ -113,8 +101,6 @@ fn process_request(
         // Suspend all workers
         ctx.workers
             .retain(|w| w.send(miner::Message::Break).is_ok());
-
-        request.respond(Response::from_string("\"OK\""))?;
     }
     Ok(())
 }
@@ -136,8 +122,6 @@ fn main() {
 
     env_logger::init();
     let opt = Opt::from_args();
-
-    let server = Server::http(WEBHOOK).unwrap();
 
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
     let context = Arc::new(Mutex::new(MinerContext {
@@ -172,6 +156,7 @@ fn main() {
     let puzzle_getter = {
         let ctx = Arc::clone(&context);
         let opt = opt.clone();
+        let sol_send = sol_send.clone();
         thread::spawn(move || loop {
             if let Err(e) = || -> Result<(), Box<dyn Error>> {
                 let pzl = ureq::get(&format!("http://{}/miner/puzzle", opt.node))
@@ -180,8 +165,9 @@ fn main() {
                     .into_string()?;
 
                 let pzl_json: RequestWrapper = serde_json::from_str(&pzl)?;
+
                 if ctx.lock()?.current_puzzle != Some(pzl_json.clone()) {
-                    ureq::post(&format!("http://{}", WEBHOOK)).send_json(pzl_json)?;
+                    process_request(ctx.clone(), pzl_json, &opt, sol_send.clone())?;
                 }
                 Ok(())
             }() {
@@ -190,12 +176,6 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(5));
         })
     };
-
-    for request in server.incoming_requests() {
-        if let Err(e) = process_request(context.clone(), request, &opt, sol_send.clone()) {
-            log::error!("Error: {}", e);
-        }
-    }
 
     if let Ok(ctx) = Arc::try_unwrap(context) {
         for mut w in ctx.into_inner().unwrap().workers {
