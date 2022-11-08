@@ -21,6 +21,9 @@ struct Opt {
     #[structopt(long = "slow")]
     slow: bool,
 
+    #[structopt(long = "pool")]
+    pool: bool,
+
     #[structopt(long, default_value = "")]
     miner_token: String,
 }
@@ -139,9 +142,11 @@ fn main() {
             for sol in sol_recv {
                 if let Err(e) = || -> Result<(), Box<dyn Error>> {
                     println!("{}", "Solution found!".bright_green());
-                    ctx.lock()?
-                        .workers
-                        .retain(|w| w.send(miner::Message::Break).is_ok());
+                    if !opt.pool {
+                        ctx.lock()?
+                            .workers
+                            .retain(|w| w.send(miner::Message::Break).is_ok());
+                    }
                     ureq::post(&format!("http://{}/miner/solution", opt.node))
                         .set("X-ZEEKA-MINER-TOKEN", &opt.miner_token)
                         .send_json(json!({ "nonce": hex::encode(sol.nonce) }))?;
