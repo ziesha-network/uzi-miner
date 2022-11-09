@@ -35,6 +35,7 @@ struct Request {
     offset: usize,
     size: usize,
     target: u32,
+    reward: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
