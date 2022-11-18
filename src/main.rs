@@ -10,7 +10,7 @@ use structopt::StructOpt;
 mod miner;
 
 #[derive(Debug, StructOpt, Clone)]
-#[structopt(name = "Uzi Miner", about = "Mine Zeeka with Uzi!")]
+#[structopt(name = "Uzi Miner", about = "Mine Ziesha with Uzi!")]
 struct Opt {
     #[structopt(short = "t", long = "threads", default_value = "1")]
     threads: usize,
@@ -119,7 +119,7 @@ struct MinerContext {
 
 fn main() {
     println!(
-        "{} v{} - RandomX CPU Miner for Zeeka Cryptocurrency",
+        "{} v{} - RandomX CPU Miner for Ziesha Cryptocurrency",
         "Uzi-Miner!".bright_green(),
         env!("CARGO_PKG_VERSION")
     );
@@ -149,7 +149,7 @@ fn main() {
                             .retain(|w| w.send(miner::Message::Break).is_ok());
                     }
                     ureq::post(&format!("http://{}/miner/solution", opt.node))
-                        .set("X-ZEEKA-MINER-TOKEN", &opt.miner_token)
+                        .set("X-ZIESHA-MINER-TOKEN", &opt.miner_token)
                         .send_json(json!({ "nonce": hex::encode(sol.nonce) }))?;
                     Ok(())
                 }() {
@@ -166,7 +166,7 @@ fn main() {
         thread::spawn(move || loop {
             if let Err(e) = || -> Result<(), Box<dyn Error>> {
                 let pzl = ureq::get(&format!("http://{}/miner/puzzle", opt.node))
-                    .set("X-ZEEKA-MINER-TOKEN", &opt.miner_token)
+                    .set("X-ZIESHA-MINER-TOKEN", &opt.miner_token)
                     .call()?
                     .into_string()?;
 
