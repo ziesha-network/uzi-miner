@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
+use std::time::{Duration, Instant};
 
 #[derive(Error, Debug)]
 pub enum WorkerError {
@@ -20,6 +21,9 @@ pub enum WorkerError {
 #[derive(Clone, Debug)]
 pub struct Solution {
     pub id: u32,
+    pub found: bool,
+    pub worker_id: u32,
+    pub hashrate: f32,
     pub nonce: Vec<u8>,
 }
 
@@ -90,6 +94,8 @@ impl Worker {
                     }
                 };
 
+                let mut hashrate: f32 = 0.0;
+
                 let mut counter = 0;
 
                 let mut hasher = Hasher::new(Arc::clone(&puzzle.context));
@@ -99,6 +105,7 @@ impl Worker {
                 rng.fill_bytes(&mut puzzle.blob[b..e]);
                 hasher.hash_first(&puzzle.blob);
 
+                let mut _start = Instant::now();
                 loop {
                     let prev_nonce = puzzle.blob[b..e].to_vec();
 
@@ -108,14 +115,31 @@ impl Worker {
                     if out.meets_difficulty(puzzle.target) {
                         callback.send(Solution {
                             id: puzzle.id,
+                            found: true,
+                            worker_id: worker_id,
+                            hashrate: hashrate,
                             nonce: prev_nonce,
                         })?;
+                    } else {
+                        if hashrate > 0.0 {
+                            callback.send(Solution {
+                                id: puzzle.id,
+                                found: false,
+                                worker_id: worker_id,
+                                hashrate: hashrate,
+                                nonce: prev_nonce,
+                            })?;
+                        }
                     }
                     counter += 1;
 
                     // Every 512 hashes, if there is a new message, cancel the current
                     // puzzle and process the message.
                     if counter >= 512 {
+                        let duration: Duration = _start.elapsed();
+                        let duration: f32 = duration.as_millis() as f32/ 1_000.0;
+                        hashrate = counter as f32 / duration;
+                        _start = Instant::now();
                         if let Ok(new_msg) = msg_recv.try_recv() {
                             msg = new_msg;
                             break;
@@ -123,7 +147,6 @@ impl Worker {
                         counter = 0;
                     }
                 }
-
                 hasher.hash_last();
             }
         });
