@@ -1,6 +1,7 @@
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::borrow::Borrow;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -8,13 +9,19 @@ use std::thread;
 use structopt::StructOpt;
 use std::time::{Duration, Instant};
 
+use crate::hashrate::Hashrate;
+
 mod miner;
+mod hashrate;
 
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "Uzi Miner", about = "Mine Ziesha with Uzi!")]
 struct Opt {
     #[structopt(short = "t", long = "threads", default_value = "1")]
     threads: usize,
+
+    #[structopt(short = "r", long = "hashrate", default_value = "1")]
+    hashrate: usize,
 
     #[structopt(short = "n", long = "node")]
     node: SocketAddr,
@@ -143,13 +150,30 @@ fn main() {
         let opt = opt.clone();
         thread::spawn(move || {
             let mut _start = Instant::now();
-            let mut v: Vec<f32> = vec![0.0; opt.threads];
+            let mut v2: Vec<Option<Hashrate>> = vec![None; opt.threads];
+            println!("{}", v2.len());
             for sol in sol_recv {
-                let duration: Duration = _start.elapsed();
-                v[sol.worker_id as usize] = (v[sol.worker_id as usize] + sol.hashrate) / 2.0;
-                if duration.as_secs_f32() > 10.0 {
-                    log::info!("Total Hashrate = {} H/s", v.iter().sum::<f32>());
-                    _start = Instant::now();
+                if opt.hashrate > 0 {
+                    // let nworkers = ctx.lock().unwrap().workers.len();
+                    let duration: Duration = _start.elapsed();
+                    v2[sol.hashrate.worker_id as usize] = Some(sol.hashrate.borrow().clone());
+                    if ! v2.contains(&None) && duration.as_secs_f32() > 30.0 {
+                        if opt.hashrate > 1 {
+                            for h in v2.iter() {
+                                println!("{}", h.borrow().clone().unwrap());
+                            }
+                        }
+                        let mut total: f32 = 0.0;
+                        for h in v2.iter() {
+                            total += h.as_ref().unwrap().value();
+                        }
+                        println!("{} = {} {} ({})",
+                                 "Total Hashrate".blue(),
+                                 format!("{:.3}", total).red(),
+                                 "H/s",
+                                 format!("{} Workers", v2.len()).yellow());
+                        _start = Instant::now();
+                    }
                 }
                 if sol.found {
                     if let Err(e) = || -> Result<(), Box<dyn Error>> {
