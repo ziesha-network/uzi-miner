@@ -150,28 +150,25 @@ fn main() {
         let opt = opt.clone();
         thread::spawn(move || {
             let mut _start = Instant::now();
-            let mut v2: Vec<Option<Hashrate>> = vec![None; opt.threads];
-            println!("{}", v2.len());
+            let mut v: Vec<Option<Hashrate>> = vec![None; opt.threads];
             for sol in sol_recv {
                 if opt.hashrate > 0 {
-                    // let nworkers = ctx.lock().unwrap().workers.len();
                     let duration: Duration = _start.elapsed();
-                    v2[sol.hashrate.worker_id as usize] = Some(sol.hashrate.borrow().clone());
-                    if ! v2.contains(&None) && duration.as_secs_f32() > 30.0 {
-                        if opt.hashrate > 1 {
-                            for h in v2.iter() {
-                                println!("{}", h.borrow().clone().unwrap());
-                            }
-                        }
+                    v[sol.hashrate.worker_id as usize] = Some(sol.hashrate.borrow().clone());
+                    if ! v.contains(&None) && duration.as_secs_f32() > 30.0 {
                         let mut total: f32 = 0.0;
-                        for h in v2.iter() {
-                            total += h.as_ref().unwrap().value();
+                        for h in v.iter() {
+                            let h2 = h.as_ref().unwrap();
+                            if opt.hashrate > 1 {
+                                println!("{}", h2);
+                            }
+                            total += h2.value();
                         }
                         println!("{} = {} {} ({})",
                                  "Total Hashrate".blue(),
                                  format!("{:.3}", total).red(),
                                  "H/s",
-                                 format!("{} Workers", v2.len()).yellow());
+                                 format!("{} Workers", v.len()).yellow());
                         _start = Instant::now();
                     }
                 }
