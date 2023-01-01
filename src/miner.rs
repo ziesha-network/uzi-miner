@@ -1,10 +1,11 @@
+use crate::hashrate::Hashrate;
 use rand::prelude::*;
 use rust_randomx::{Context, Difficulty, Hasher};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 use thiserror::Error;
-use crate::hashrate::Hashrate;
 
 #[derive(Error, Debug)]
 pub enum WorkerError {
@@ -54,6 +55,8 @@ pub struct Worker {
     chan: mpsc::Sender<Message>,
 }
 
+const HASH_PER_ROUND: usize = 512;
+
 impl Worker {
     pub fn send(&self, msg: Message) -> Result<(), WorkerError> {
         if self.handle.is_some() {
@@ -72,8 +75,11 @@ impl Worker {
             Err(WorkerError::Terminated)
         }
     }
-    pub fn new(worker_id: u32, callback: mpsc::Sender<Solution>,
-               callback2: mpsc::Sender<Hashrate>) -> Self {
+    pub fn new(
+        worker_id: u32,
+        callback: mpsc::Sender<Solution>,
+        hashrate_sender: mpsc::Sender<(u32, Hashrate)>,
+    ) -> Self {
         let (msg_send, msg_recv) = mpsc::channel::<Message>();
         let handle = thread::spawn(move || -> Result<(), WorkerError> {
             let mut rng = rand::thread_rng();
@@ -101,8 +107,7 @@ impl Worker {
                 rng.fill_bytes(&mut puzzle.blob[b..e]);
                 hasher.hash_first(&puzzle.blob);
 
-                // Start hashrate calculator
-                let mut hr: Hashrate = Hashrate::new(worker_id, 0.0);
+                let mut start = Instant::now();
                 loop {
                     let prev_nonce = puzzle.blob[b..e].to_vec();
 
@@ -117,22 +122,18 @@ impl Worker {
                     }
                     counter += 1;
 
-                    // if enough number of samples are collected
-                    if hr.available() {
-                        callback2.send(hr.clone()).
-                            unwrap_or_else(|err| 
-                                println!("{:?}", err));
-                    }
-                    hr.count(); // Calculate hashrate
-
-
-                    // Every 512 hashes, if there is a new message, cancel the current
+                    // Every HASH_PER_ROUND hashes, if there is a new message, cancel the current
                     // puzzle and process the message.
-                    if counter >= 512 {
+                    if counter >= HASH_PER_ROUND {
                         if let Ok(new_msg) = msg_recv.try_recv() {
                             msg = new_msg;
                             break;
                         }
+                        let elapsed = start.elapsed().as_millis() as f32 / 1000.0;
+                        hashrate_sender
+                            .send((worker_id, Hashrate(HASH_PER_ROUND as f32 / elapsed)))
+                            .unwrap_or_else(|err| println!("{:?}", err));
+                        start = Instant::now();
                         counter = 0;
                     }
                 }
