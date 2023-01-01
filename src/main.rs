@@ -56,6 +56,7 @@ fn process_request(
     req: RequestWrapper,
     opt: &Opt,
     sol_send: std::sync::mpsc::Sender<miner::Solution>,
+    hash_send: std::sync::mpsc::Sender<hashrate::Hashrate>,
 ) -> Result<(), Box<dyn Error>> {
     let mut ctx = context.lock().unwrap();
     ctx.current_puzzle = Some(req.clone());
@@ -82,7 +83,9 @@ fn process_request(
 
         // Ensure correct number of workers
         while ctx.workers.len() < opt.threads {
-            let worker = miner::Worker::new(ctx.worker_id, sol_send.clone());
+            let worker = miner::Worker::new(ctx.worker_id,
+                                                sol_send.clone(),
+                                                hash_send.clone());
             ctx.workers.push(worker);
             ctx.worker_id += 1;
         }
@@ -137,6 +140,7 @@ fn main() {
     let mut nw: usize = 0;
 
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
+    let (hash_send, hash_recv) = std::sync::mpsc::channel::<hashrate::Hashrate>();
     let context = Arc::new(Mutex::new(MinerContext {
         workers: Vec::new(),
         current_puzzle: None,
@@ -149,12 +153,34 @@ fn main() {
         let ctx = Arc::clone(&context);
         let opt = opt.clone();
         thread::spawn(move || {
+            for sol in sol_recv {
+                if let Err(e) = || -> Result<(), Box<dyn Error>> {
+                    println!("{}", "Solution found!".bright_green());
+                    if !opt.pool {
+                        ctx.lock()?
+                            .workers
+                            .retain(|w| w.send(miner::Message::Break).is_ok());
+                    }
+                    ureq::post(&format!("http://{}/miner/solution", opt.node))
+                        .set("X-ZIESHA-MINER-TOKEN", &opt.miner_token)
+                        .send_json(json!({ "nonce": hex::encode(sol.nonce) }))?;
+                    Ok(())
+                }() {
+                    log::error!("Error: {}", e);
+                }
+            }
+        })
+    };
+
+    let hashrate_getter = {
+        let opt = opt.clone();
+        thread::spawn(move || {
             let mut _start = Instant::now();
             let mut v: Vec<Option<Hashrate>> = vec![None; opt.threads];
-            for sol in sol_recv {
+            for hash in hash_recv {
                 if opt.hashrate > 0 {
                     let duration: Duration = _start.elapsed();
-                    v[sol.hashrate.worker_id as usize] = Some(sol.hashrate.borrow().clone());
+                    v[hash.worker_id as usize] = Some(hash.borrow().clone());
                     if ! v.contains(&None) && duration.as_secs_f32() > 30.0 {
                         let mut total: f32 = 0.0;
                         for h in v.iter() {
@@ -164,28 +190,13 @@ fn main() {
                             }
                             total += h2.value();
                         }
+                        let (total, unit) = hashrate::get_unit(total);
                         println!("{} = {} {} ({})",
-                                 "Total Hashrate".blue(),
-                                 format!("{:.3}", total).red(),
-                                 "H/s",
-                                 format!("{} Workers", v.len()).yellow());
+                                    "Total Hashrate".blue(),
+                                    format!("{:.3}", total).red(),
+                                    unit,
+                                    format!("{} Workers", v.len()).yellow());
                         _start = Instant::now();
-                    }
-                }
-                if sol.found {
-                    if let Err(e) = || -> Result<(), Box<dyn Error>> {
-                        println!("{}", "Solution found!".bright_green());
-                        if !opt.pool {
-                            ctx.lock()?
-                                .workers
-                                .retain(|w| w.send(miner::Message::Break).is_ok());
-                        }
-                        ureq::post(&format!("http://{}/miner/solution", opt.node))
-                            .set("X-ZIESHA-MINER-TOKEN", &opt.miner_token)
-                            .send_json(json!({ "nonce": hex::encode(sol.nonce) }))?;
-                        Ok(())
-                    }() {
-                        log::error!("Error: {}", e);
                     }
                 }
             }
@@ -206,7 +217,8 @@ fn main() {
                 let pzl_json: RequestWrapper = serde_json::from_str(&pzl)?;
 
                 if ctx.lock()?.current_puzzle != Some(pzl_json.clone()) {
-                    process_request(ctx.clone(), pzl_json, &opt, sol_send.clone())?;
+                    process_request(ctx.clone(), pzl_json, &opt, 
+                                    sol_send.clone(), hash_send.clone())?;
                     nw = ctx.lock()?.workers.len();
                     log::info!("nWorkers: {}", nw);
                 }
@@ -225,5 +237,6 @@ fn main() {
     }
     drop(sol_send);
     solution_getter.join().unwrap();
+    hashrate_getter.join().unwrap();
     puzzle_getter.join().unwrap();
 }

@@ -21,8 +21,6 @@ pub enum WorkerError {
 #[derive(Clone, Debug)]
 pub struct Solution {
     pub id: u32,
-    pub found: bool,
-    pub hashrate: Hashrate,
     pub nonce: Vec<u8>,
 }
 
@@ -74,7 +72,8 @@ impl Worker {
             Err(WorkerError::Terminated)
         }
     }
-    pub fn new(worker_id: u32, callback: mpsc::Sender<Solution>) -> Self {
+    pub fn new(worker_id: u32, callback: mpsc::Sender<Solution>,
+               callback2: mpsc::Sender<Hashrate>) -> Self {
         let (msg_send, msg_recv) = mpsc::channel::<Message>();
         let handle = thread::spawn(move || -> Result<(), WorkerError> {
             let mut rng = rand::thread_rng();
@@ -102,6 +101,7 @@ impl Worker {
                 rng.fill_bytes(&mut puzzle.blob[b..e]);
                 hasher.hash_first(&puzzle.blob);
 
+                // Start hashrate calculator
                 let mut hr: Hashrate = Hashrate::new(worker_id, 0.0);
                 loop {
                     let prev_nonce = puzzle.blob[b..e].to_vec();
@@ -109,17 +109,22 @@ impl Worker {
                     rng.fill_bytes(&mut puzzle.blob[b..e]);
                     let out = hasher.hash_next(&puzzle.blob);
 
-                    let found = out.meets_difficulty(puzzle.target);
-                    if found || hr.available() {
+                    if out.meets_difficulty(puzzle.target) {
                         callback.send(Solution {
                             id: puzzle.id,
-                            found: found,
-                            hashrate: Hashrate::new(worker_id, hr.value()),
                             nonce: prev_nonce,
                         })?;
                     }
                     counter += 1;
-                    hr.count();
+
+                    // if enough number of samples are collected
+                    if hr.available() {
+                        callback2.send(hr.clone()).
+                            unwrap_or_else(|err| 
+                                println!("{:?}", err));
+                    }
+                    hr.count(); // Calculate hashrate
+
 
                     // Every 512 hashes, if there is a new message, cancel the current
                     // puzzle and process the message.

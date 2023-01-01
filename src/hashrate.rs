@@ -1,6 +1,22 @@
 use std::time::{Duration, Instant};
 use colored::*;
 
+
+pub fn get_unit(hashrate: f32) -> (f32, String) {
+    let mut hashrate = hashrate as f32;
+    let mut unit = "";
+    let units = vec!["k", "M", "G", "T", "P", "E", "Z", "Y"];
+    for u in units.iter() {
+        if hashrate > 1000.0 {
+            hashrate /= 1000.0;
+            unit = u;
+        } else {
+            break;
+        }
+    }
+    (hashrate, format!("{}H/s", unit))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hashrate {
     pub worker_id: u32,
@@ -14,9 +30,11 @@ pub struct Hashrate {
 
 impl std::fmt::Display for Hashrate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Worker {} Hashrate = {} H/s",
+        let (value, unit) = get_unit(self.value);
+        write!(f, "Worker {} Hashrate = {} {}",
                format!("#{}", self.worker_id).yellow(),
-               format!("{:.3}", self.value).red())
+               format!("{:.3}", value).red(),
+               unit)
     }
 }
 
