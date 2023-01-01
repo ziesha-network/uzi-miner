@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
+use crate::hashrate::Hashrate;
 
 #[derive(Error, Debug)]
 pub enum WorkerError {
@@ -71,7 +72,8 @@ impl Worker {
             Err(WorkerError::Terminated)
         }
     }
-    pub fn new(worker_id: u32, callback: mpsc::Sender<Solution>) -> Self {
+    pub fn new(worker_id: u32, callback: mpsc::Sender<Solution>,
+               callback2: mpsc::Sender<Hashrate>) -> Self {
         let (msg_send, msg_recv) = mpsc::channel::<Message>();
         let handle = thread::spawn(move || -> Result<(), WorkerError> {
             let mut rng = rand::thread_rng();
@@ -99,6 +101,8 @@ impl Worker {
                 rng.fill_bytes(&mut puzzle.blob[b..e]);
                 hasher.hash_first(&puzzle.blob);
 
+                // Start hashrate calculator
+                let mut hr: Hashrate = Hashrate::new(worker_id, 0.0);
                 loop {
                     let prev_nonce = puzzle.blob[b..e].to_vec();
 
@@ -113,6 +117,15 @@ impl Worker {
                     }
                     counter += 1;
 
+                    // if enough number of samples are collected
+                    if hr.available() {
+                        callback2.send(hr.clone()).
+                            unwrap_or_else(|err| 
+                                println!("{:?}", err));
+                    }
+                    hr.count(); // Calculate hashrate
+
+
                     // Every 512 hashes, if there is a new message, cancel the current
                     // puzzle and process the message.
                     if counter >= 512 {
@@ -123,7 +136,6 @@ impl Worker {
                         counter = 0;
                     }
                 }
-
                 hasher.hash_last();
             }
         });

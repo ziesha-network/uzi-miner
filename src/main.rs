@@ -1,19 +1,27 @@
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::borrow::Borrow;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use structopt::StructOpt;
+use std::time::{Duration, Instant};
+
+use crate::hashrate::Hashrate;
 
 mod miner;
+mod hashrate;
 
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(name = "Uzi Miner", about = "Mine Ziesha with Uzi!")]
 struct Opt {
     #[structopt(short = "t", long = "threads", default_value = "1")]
     threads: usize,
+
+    #[structopt(short = "r", long = "hashrate", default_value = "1")]
+    hashrate: usize,
 
     #[structopt(short = "n", long = "node")]
     node: SocketAddr,
@@ -48,6 +56,7 @@ fn process_request(
     req: RequestWrapper,
     opt: &Opt,
     sol_send: std::sync::mpsc::Sender<miner::Solution>,
+    hash_send: std::sync::mpsc::Sender<hashrate::Hashrate>,
 ) -> Result<(), Box<dyn Error>> {
     let mut ctx = context.lock().unwrap();
     ctx.current_puzzle = Some(req.clone());
@@ -74,7 +83,9 @@ fn process_request(
 
         // Ensure correct number of workers
         while ctx.workers.len() < opt.threads {
-            let worker = miner::Worker::new(ctx.worker_id, sol_send.clone());
+            let worker = miner::Worker::new(ctx.worker_id,
+                                                sol_send.clone(),
+                                                hash_send.clone());
             ctx.workers.push(worker);
             ctx.worker_id += 1;
         }
@@ -126,8 +137,10 @@ fn main() {
 
     env_logger::init();
     let opt = Opt::from_args();
+    let mut nw: usize = 0;
 
     let (sol_send, sol_recv) = std::sync::mpsc::channel::<miner::Solution>();
+    let (hash_send, hash_recv) = std::sync::mpsc::channel::<hashrate::Hashrate>();
     let context = Arc::new(Mutex::new(MinerContext {
         workers: Vec::new(),
         current_puzzle: None,
@@ -159,6 +172,37 @@ fn main() {
         })
     };
 
+    let hashrate_getter = {
+        let opt = opt.clone();
+        thread::spawn(move || {
+            let mut _start = Instant::now();
+            let mut v: Vec<Option<Hashrate>> = vec![None; opt.threads];
+            for hash in hash_recv {
+                if opt.hashrate > 0 {
+                    let duration: Duration = _start.elapsed();
+                    v[hash.worker_id as usize] = Some(hash.borrow().clone());
+                    if ! v.contains(&None) && duration.as_secs_f32() > 30.0 {
+                        let mut total: f32 = 0.0;
+                        for h in v.iter() {
+                            let h2 = h.as_ref().unwrap();
+                            if opt.hashrate > 1 {
+                                println!("{}", h2);
+                            }
+                            total += h2.value();
+                        }
+                        let (total, unit) = hashrate::get_unit(total);
+                        println!("{} = {} {} ({})",
+                                    "Total Hashrate".blue(),
+                                    format!("{:.3}", total).red(),
+                                    unit,
+                                    format!("{} Workers", v.len()).yellow());
+                        _start = Instant::now();
+                    }
+                }
+            }
+        })
+    };
+
     let puzzle_getter = {
         let ctx = Arc::clone(&context);
         let opt = opt.clone();
@@ -173,7 +217,10 @@ fn main() {
                 let pzl_json: RequestWrapper = serde_json::from_str(&pzl)?;
 
                 if ctx.lock()?.current_puzzle != Some(pzl_json.clone()) {
-                    process_request(ctx.clone(), pzl_json, &opt, sol_send.clone())?;
+                    process_request(ctx.clone(), pzl_json, &opt, 
+                                    sol_send.clone(), hash_send.clone())?;
+                    nw = ctx.lock()?.workers.len();
+                    log::info!("nWorkers: {}", nw);
                 }
                 Ok(())
             }() {
@@ -190,5 +237,6 @@ fn main() {
     }
     drop(sol_send);
     solution_getter.join().unwrap();
+    hashrate_getter.join().unwrap();
     puzzle_getter.join().unwrap();
 }
