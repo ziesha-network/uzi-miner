@@ -167,16 +167,17 @@ fn main() {
     };
 
     let hashrate_getter = {
+        const HASHRATE_REPORT_INTERVAL: f32 = 30.0;
         let opt = opt.clone();
         thread::spawn(move || {
-            let mut _start = Instant::now();
+            let mut start = Instant::now();
             let mut v = vec![Hashrate::default(); opt.threads];
             for (worker_id, hash) in hash_recv {
-                let duration: Duration = _start.elapsed();
+                let duration: Duration = start.elapsed();
                 v[worker_id as usize] = hash;
-                if duration.as_secs_f32() > 30.0 {
+                if duration.as_secs_f32() > HASHRATE_REPORT_INTERVAL {
                     for h in v.iter() {
-                        println!(
+                        log::info!(
                             "Worker {} Hashrate = {}",
                             format!("#{}", worker_id).yellow(),
                             h
@@ -189,7 +190,7 @@ fn main() {
                         total_rate,
                         format!("{} Workers", v.len()).yellow()
                     );
-                    _start = Instant::now();
+                    start = Instant::now();
                 }
             }
         })
