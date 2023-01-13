@@ -176,10 +176,10 @@ fn main() {
                 let duration: Duration = start.elapsed();
                 v[worker_id as usize] = hash;
                 if duration.as_secs_f32() > HASHRATE_REPORT_INTERVAL {
-                    for h in v.iter() {
+                    for (i, h) in v.iter().enumerate() {
                         log::info!(
                             "Worker {} Hashrate = {}",
-                            format!("#{}", worker_id).yellow(),
+                            format!("#{}", i).yellow(),
                             h
                         );
                     }

@@ -14,7 +14,7 @@ impl std::fmt::Display for Hashrate {
                 break;
             }
         }
-        write!(f, "{:.3} {}", hashrate, unit)
+        write!(f, "{:.3} {}H/s", hashrate, unit)
     }
 }
 
