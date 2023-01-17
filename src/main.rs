@@ -177,11 +177,7 @@ fn main() {
                 v[worker_id as usize] = hash;
                 if duration.as_secs_f32() > HASHRATE_REPORT_INTERVAL {
                     for (i, h) in v.iter().enumerate() {
-                        log::info!(
-                            "Worker {} Hashrate = {}",
-                            format!("#{}", i).yellow(),
-                            h
-                        );
+                        log::info!("Worker {} Hashrate = {}", format!("#{}", i).yellow(), h);
                     }
                     let total_rate = v.iter().cloned().sum::<Hashrate>();
                     println!(
